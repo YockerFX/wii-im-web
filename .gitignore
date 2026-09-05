@@ -1,0 +1,7 @@
+node_modules/
+.env
+out/Build/
+static/
+garage/
+caddy-root.crt
+.DS_Store

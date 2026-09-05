@@ -1,0 +1,58 @@
+<!doctype html><meta charset="utf-8"><title>Spike Console</title>
+<style>body{font:15px system-ui;margin:0;padding:16px;background:#111;color:#eee}table{border-collapse:collapse}td{padding:4px 12px;border-bottom:1px solid #333}canvas{background:#222;display:block;margin-top:12px}</style>
+<table id="stats"></table><canvas id="c" width="640" height="360"></canvas>
+<p>Taste <b>R</b> = Cursor recentern. Drift = Cursor-Abweichung nach 60 s ruhigem Handy.</p>
+<script>
+// Spike (Plan 10): misst Frames/s, Jitter p95, RTT, Verlust und ICE-Pfad; zeichnet Neigung (beta/gamma) und einen Gyro-integrierten Yaw-Cursor.
+const q = new URLSearchParams(location.search);
+const iceServers = q.get('turn') ? [{ urls: q.get('turn'), username: q.get('user'), credential: q.get('cred') }] : q.get('ice') ? [{ urls: q.get('ice') }] : [];
+const sig = new WebSocket(`wss://${location.host}/ws`);
+const send = m => sig.readyState === 1 && sig.send(JSON.stringify({ role: 'console', ...m }));
+let pc, sensors, events, last = null, frames = [], gaps = [], lost = 0, rtts = [], path = '–', yaw = 0, lastT = 0, tilt = [0, 0];
+const S = { fps: 0, jitterP95: 0, rttMedian: 0, lossPct: 0, path: '–', state: '–', yawDrift: 0 };
+
+sig.onmessage = async ({ data }) => {
+  const m = JSON.parse(data); if (m.role !== 'controller') return;
+  if (m.t === 'hello') {
+    pc = new RTCPeerConnection({ iceServers, iceTransportPolicy: q.get('forceRelay') ? 'relay' : 'all' });
+    sensors = pc.createDataChannel('sensors', { negotiated: true, id: 0, ordered: false, maxRetransmits: 0 });
+    events = pc.createDataChannel('events', { negotiated: true, id: 1 });
+    sensors.binaryType = 'arraybuffer';
+    sensors.onmessage = ({ data }) => onFrame(new DataView(data));
+    events.onmessage = ({ data }) => { const p = JSON.parse(data); if (p.t === 'pong') rtts.push(performance.now() - p.ts); };
+    pc.onicecandidate = e => e.candidate && send({ t: 'ice', candidate: e.candidate });
+    pc.onconnectionstatechange = () => S.state = pc.connectionState;
+    await pc.setLocalDescription(await pc.createOffer());
+    send({ t: 'offer', sdp: pc.localDescription });
+  } else if (m.t === 'answer') await pc.setRemoteDescription(m.sdp);
+  else if (m.t === 'ice' && pc) await pc.addIceCandidate(m.candidate).catch(() => {});
+};
+
+function onFrame(dv) {
+  const now = performance.now(), seq = dv.getUint16(0, true);
+  if (last !== null) { const d = (seq - last) & 0xffff; if (d >= 0x8000) return; if (d > 1) lost += d - 1; gaps.push(now - frames.at(-1)); }
+  last = seq; frames.push(now);
+  const f = i => dv.getFloat32(8 + 4 * i, true);                     // 0-2 accel, 3-5 rotationRate, 6-8 orientation
+  const dt = lastT ? (now - lastT) / 1000 : 0; lastT = now;
+  yaw += f(3) * dt;                                                   // rotationRate.alpha (°/s) integriert = relativer Yaw
+  tilt = [f(7), f(8)];                                                // beta, gamma
+}
+setInterval(() => events?.readyState === 'open' && events.send(JSON.stringify({ t: 'ping', ts: performance.now() })), 500);
+setInterval(async () => {
+  const now = performance.now(); frames = frames.filter(t => now - t < 1000); gaps = gaps.slice(-300); rtts = rtts.slice(-60);
+  const p95 = a => a.length ? [...a].sort((x, y) => x - y)[Math.floor(a.length * 0.95)] : 0, med = a => a.length ? [...a].sort((x, y) => x - y)[a.length >> 1] : 0;
+  S.fps = frames.length; S.jitterP95 = +p95(gaps).toFixed(1); S.rttMedian = +med(rtts).toFixed(1);
+  S.lossPct = last === null ? 0 : +(100 * lost / Math.max(1, lost + frames.length * 60)).toFixed(2); S.yawDrift = +yaw.toFixed(1);
+  if (pc) { const st = await pc.getStats(); let pair; st.forEach(s => { if (s.type === 'candidate-pair' && s.state === 'succeeded' && s.nominated) pair = s; });
+    if (pair) { const l = st.get(pair.localCandidateId), r = st.get(pair.remoteCandidateId); S.path = `${l.candidateType}/${l.protocol} -> ${r.candidateType}`; } }
+  document.getElementById('stats').innerHTML = Object.entries(S).map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
+}, 1000);
+addEventListener('keydown', e => { if (e.key.toLowerCase() === 'r') yaw = 0; });
+const ctx = document.getElementById('c').getContext('2d');
+(function draw() {
+  ctx.clearRect(0, 0, 640, 360);
+  ctx.save(); ctx.translate(320, 180); ctx.rotate(tilt[1] * Math.PI / 180); ctx.fillStyle = '#4af'; ctx.fillRect(-100, -20 - tilt[0], 200, 40); ctx.restore();
+  ctx.fillStyle = '#fa4'; ctx.beginPath(); ctx.arc(320 + Math.max(-300, Math.min(300, yaw * 6)), 60, 10, 0, 7); ctx.fill();
+  requestAnimationFrame(draw);
+})();
+</script>

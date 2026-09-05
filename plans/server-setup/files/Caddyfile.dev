@@ -1,0 +1,5 @@
+# Lokal: Caddy-eigene CA (tls internal). Root-CA fürs Handy: docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./caddy-root.crt
+<LAN_IP>, localhost {
+	tls internal
+	import /etc/caddy/site.caddy
+}

@@ -1,0 +1,713 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Wii im Web – Console</title>
+<style>
+  :root { color-scheme: dark }
+  [hidden] { display: none !important }                 /* auch für display:flex-Elemente */
+  body { font: 15px/1.5 system-ui, sans-serif; margin: 0; padding: 24px; background: #111; color: #eee }
+  h1 { font-size: 20px; margin: 0 0 16px; font-weight: 600 }
+  button { font-size: 20px; padding: 16px 28px; border: 0; border-radius: 10px; background: #4af; color: #012; font-weight: 600; cursor: pointer }
+  #code { font-size: 64px; letter-spacing: 10px; font-weight: 700; font-family: ui-monospace, monospace; margin: 8px 0 }
+  #url { font-family: ui-monospace, monospace; background: #1b1b1b; padding: 4px 8px; border-radius: 6px; user-select: all }
+  table { border-collapse: collapse; margin: 16px 0; min-width: 560px }
+  th, td { padding: 6px 14px; border-bottom: 1px solid #2a2a2a; text-align: left; font-variant-numeric: tabular-nums }
+  th { color: #888; font-weight: 500 }
+  .sw { display: inline-block; width: 14px; height: 14px; border-radius: 4px; background: #333; vertical-align: -2px; margin-right: 8px }
+  canvas { background: #191919; border-radius: 12px; display: block; max-width: 100%; height: auto }
+  .note, #hint, #status { color: #999 }
+  #hint { min-height: 1.5em }
+  #samples { margin: 16px 0 }
+  #samples h2 { font-size: 14px; font-weight: 500; color: #888; margin: 0 0 10px }
+  .sample { min-height: 64px; min-width: 200px; margin: 0 12px 12px 0 }
+  .sample.hit { background: #fff }
+  #sample-field { font: 16px system-ui, sans-serif; width: 260px; padding: 20px 14px; vertical-align: top;
+                  border-radius: 10px; border: 2px solid #444; background: #1b1b1b; color: #eee }
+  /* Zeiger = Wii-Hand aus cursors.svg (Hotspot Fingerspitze 12,2 von 96×122 → 7px,1px bei 56px Breite) */
+  .wii-pointer { position: fixed; left: 0; top: 0; width: 56px; height: 71px; z-index: 999; pointer-events: none; transform-origin: 7px 1px }
+  .wii-pointer svg { width: 100%; height: 100%; display: block }
+  .wii-pointer.link { --line: #2f7bff }                    /* über Klickbarem: Kontur blau */
+  .wii-pointer b { position: absolute; left: 50%; top: 44%; transform: translateX(-50%) rotate(-12deg);
+                   font: 700 22px system-ui, sans-serif; color: var(--pc, #008cff); text-shadow: 0 0 2px #fff }
+  .wii-hover { outline: 3px solid var(--hov, #4af); outline-offset: 3px }
+  #target { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 998;
+            pointer-events: none; text-align: center; color: #fff }
+  #target .ring { position: relative; width: 56px; height: 56px; margin: 0 auto;
+                  border: 2px solid #fff; border-radius: 50%; box-shadow: 0 2px 8px rgba(0,0,0,.6) }
+  #target .ring::before, #target .ring::after { content: ''; position: absolute; background: #fff }
+  #target .ring::before { left: 50%; top: -16px; width: 2px; height: 88px; margin-left: -1px }
+  #target .ring::after { top: 50%; left: -16px; height: 2px; width: 88px; margin-top: -1px }
+  #target p { margin: 16px 0 0; font-size: 14px; display: inline-block;
+              padding: 6px 12px; border-radius: 8px; background: rgba(0,0,0,.72) }
+  /* --- Wii-Menü: liegt über der Debug-Seite, sobald ein Controller verbunden ist --- */
+  #menu { position: fixed; inset: 0; z-index: 500; color-scheme: light; --stripes: repeating-linear-gradient(#fff 0 3px, #dcdcdc 3px 4px);
+          background: var(--stripes) }
+  .wii-hover:not(button, a, input, select, textarea, label, [role=button]) { outline: none }   /* nur Klickbares markieren */
+  /* 4×3, Kacheln 16:10. Breite: 88vw auf 16:9 (Breite begrenzt), 164vh auf Ultrawide (Höhe begrenzt → Rand links/rechts).
+     164vh = 4 Kacheln à (80vh − 2·2.4vh)/3 ÷ 1.6 + 3 Lücken à 1.2vh, damit 3 Reihen in 80vh passen. */
+  #grid { position: absolute; left: 50%; top: 43vh; transform: translate(-50%, -50%); width: min(88vw, 164vh);
+          display: grid; grid-template-columns: repeat(4, 1fr); gap: 2.4vh 1.2vh }
+  .ch { min-width: 0; min-height: 0; margin: 0; padding: 0; aspect-ratio: 1.6; border-radius: 26px; border: 5px solid #c4c4c4;
+        box-shadow: inset 0 0 0 3px #f4f4f4; color: #fff; font: 700 3.4vh system-ui, sans-serif; text-shadow: 0 2px 4px rgba(0,0,0,.4) }
+  .ch.hit { filter: brightness(1.6) }
+  #bar { position: absolute; left: 0; right: 0; bottom: 0; height: 14vh; background: #e9e9e9; border-top: 4px solid #8dd6f4 }
+  #notch { position: absolute; left: 50%; top: -4px; transform: translateX(-50%); width: 42vw; height: 6vh; background: var(--stripes);
+           border: 4px solid #8dd6f4; border-top: 0; border-radius: 0 0 70px 70px; text-align: center }
+  #clock { font: 700 5vh ui-monospace, monospace; line-height: 6vh; color: #555; letter-spacing: .04em }
+  #date { position: absolute; left: 0; right: 0; top: 7.5vh; text-align: center; font-size: 3.2vh; color: #666 }
+  .round { position: absolute; top: 50%; transform: translateY(-50%); width: 9vh; height: 9vh; border-radius: 50%; padding: 0; margin: 0;
+           background: radial-gradient(circle at 50% 30%, #fff, #d6d6d6); border: 4px solid #9fe0f8; box-shadow: 0 0 0 5px #d4d4d4;
+           font: 700 2.6vh system-ui, sans-serif; color: #9a9a9a; display: grid; place-items: center }
+  #wiibtn { left: 4.5vw } #mail { right: 4.5vw; font-size: 4.5vh; color: #b0b0b0 }
+  #sd { position: absolute; left: 18vw; top: 34%; width: 2.5vh; height: 3.3vh; background: #d9f2fb; border: 3px solid #8dd6f4; border-radius: 4px;
+        clip-path: polygon(0 0, 65% 0, 100% 28%, 100% 100%, 0 100%); font: 700 1.8vh system-ui, sans-serif; color: #49b; display: grid; place-items: end center }
+  /* --- Start-Screen (Design „Wii Menu (Community)“): oben hell mit 4 Fernbedienungen + QR, unten gestreifte Leiste --- */
+  #start { position: fixed; inset: 0; z-index: 500; color-scheme: light; color: #383e3f; font-family: system-ui, sans-serif;
+           background: linear-gradient(#fff 53%, #f5f5f5) }
+  #start .foot { position: absolute; left: 0; right: 0; bottom: 0; height: 26.6vh;
+                 background: repeating-linear-gradient(#c9c9c1 0 6px, #e1e1e1 6px 8px) }
+  .pill { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 28.4vw; height: 13.7vh; border-radius: 999px;
+          background: #e3e8ef; border: 4px solid #34beed; color: #383e3f; font: 500 6vh system-ui, sans-serif; padding: 0; margin: 0;
+          box-shadow: 0 0 5px rgba(52,190,237,.8), inset 0 12px 20px rgba(255,255,255,.9), inset 0 -14px 24px rgba(177,188,202,.6) }
+  .pill::before { content: ''; position: absolute; left: 4%; right: 8%; top: 6%; height: 30%; border-radius: 999px;
+                  background: rgba(255,255,255,.85); filter: blur(1.5px) }
+  #spots { position: absolute; top: 6vh; left: 0; right: 0; display: flex; justify-content: center; gap: 6vw }
+  .spot { text-align: center; font-size: 2.4vh; color: #888; width: 14vw }
+  .spot b { display: block; font-size: 2.8vh; color: #383e3f }
+  /* Silhouette wie der Controller am Handy: Power, A, −/Home/+, Speaker, 1, 2, LEDs.
+     Alle Teile absolut in %, damit die Miniatur dieselben Verhaeltnisse zeigt. */
+  .remote { position: relative; width: 7vh; height: 24vh; margin: 0 auto 1.5vh; border-radius: 2.2vh; border: 2px solid #cfcfcf;
+            background: linear-gradient(90deg, #f0f0f0, #fff 40%, #e4e4e4); box-shadow: 0 6px 14px rgba(0,0,0,.12) }
+  .remote > i { position: absolute; left: 50%; translate: -50%; aspect-ratio: 1; border-radius: 50%;
+                background: #dcdcdc; box-shadow: inset 0 1px 2px rgba(0,0,0,.15) }
+  .remote .pw { left: 13%; translate: none; top: 3%; width: 24% }
+  .remote .a  { top: 20%; width: 46% }
+  .remote .mi { left: 17%; translate: none; top: 38%; width: 16% }
+  .remote .ho { top: 38%; width: 18%; border-radius: 22%; background: #cfe6f5 }
+  .remote .pl { left: 67%; translate: none; top: 38%; width: 16% }
+  .remote .sp { top: 48%; width: 26%; aspect-ratio: 5 / 7; border-radius: 0; box-shadow: none; opacity: .8;
+                background-image: radial-gradient(#c6c6c6 22%, transparent 24%); background-size: 20% 14.3% }
+  .remote .b1 { top: 63%; width: 26% }
+  .remote .b2 { top: 76%; width: 26% }
+  .leds { position: absolute; left: 0; right: 0; bottom: 1.2vh; display: flex; justify-content: center; gap: .5vh }
+  .leds i { width: .8vh; height: .8vh; border-radius: 2px; background: #cfd3d6 }
+  .leds i.on { background: #34beed; box-shadow: 0 0 6px #34beed }
+  .spot.on .remote { border-color: var(--c); box-shadow: 0 0 0 3px var(--c), 0 6px 14px rgba(0,0,0,.12) }
+  #join { position: absolute; top: 44vh; left: 0; right: 0; display: flex; justify-content: center; align-items: center; gap: 3vw }
+  #qr { width: 23vh; height: 23vh; padding: 1vh; background: #fff; border-radius: 1.5vh; box-shadow: 0 6px 18px rgba(0,0,0,.12) }
+  #qr svg { width: 100%; height: 100%; display: block }
+  #scode { font: 700 8vh ui-monospace, monospace; letter-spacing: .12em; line-height: 1 }
+  #surl { font-size: 2.4vh; color: #666; margin-top: 1vh }
+  #sstatus { font-size: 2.2vh; color: #999; margin-top: 2vh }
+  #shint { position: absolute; top: 66vh; left: 0; right: 0; margin: 0; text-align: center; font-size: 3vh; color: #777 }
+  /* --- Spiel-Ansicht (Plan 02/03): #g3d (WebGL) unten, #gc (2D-HUD) darüber, Ergebnisbox zuoberst --- */
+  #game { position: fixed; inset: 0; z-index: 500; background: #191919 }
+  #g3d, #gc { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; border-radius: 0 }
+  /* ponytail: #gc ist nur noch HUD – transparent, sonst verdeckt es das 3D; Schnittfest malt seinen Hintergrund je Frame selbst. */
+  #gc { background: transparent; pointer-events: none }
+  #gresult { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); text-align: center;
+             background: rgba(17,17,17,.92); border: 2px solid #333; border-radius: 20px; padding: 28px 40px }
+  #gresult h2 { font-size: 22px; margin: 0 0 12px }
+  #gresult button { margin: 0 6px }
+  #grank { list-style: none; margin: 0 0 22px; padding: 0; font: 700 30px/1.4 system-ui, sans-serif }
+</style>
+</head>
+<body>
+
+<h1>Wii im Web – Console</h1>
+
+<div id="pre">
+  <button id="create">Raum erstellen</button>
+  <p id="hint"></p>
+</div>
+
+<div id="room" hidden>
+  <div id="code">–</div>
+  <p>Am Handy öffnen: <code id="url"></code></p>
+  <p id="status"></p>
+</div>
+
+<table id="slots">
+  <thead><tr><th>Slot</th><th>Farbe</th><th>Zustand</th><th>Pfad</th><th>Rate</th></tr></thead>
+  <tbody>
+    <tr data-slot="0"><td>0</td><td><span class="sw"></span><span class="col">–</span></td><td class="st">frei</td><td class="pa">–</td><td class="fp">–</td></tr>
+    <tr data-slot="1"><td>1</td><td><span class="sw"></span><span class="col">–</span></td><td class="st">frei</td><td class="pa">–</td><td class="fp">–</td></tr>
+    <tr data-slot="2"><td>2</td><td><span class="sw"></span><span class="col">–</span></td><td class="st">frei</td><td class="pa">–</td><td class="fp">–</td></tr>
+    <tr data-slot="3"><td>3</td><td><span class="sw"></span><span class="col">–</span></td><td class="st">frei</td><td class="pa">–</td><td class="fp">–</td></tr>
+  </tbody>
+</table>
+
+<section id="samples">
+  <h2>Beispiel-Buttons (mit dem Handy anklicken)</h2>
+  <button class="sample" id="sample-1">Beispiel 1</button>
+  <button class="sample" id="sample-2">Beispiel 2</button>
+  <input id="sample-field" placeholder="Feld (per Zeiger fokussieren)">
+</section>
+
+<canvas id="c" width="960" height="360"></canvas>
+<p class="note">Platzhalter: je verbundener Slot ein Handy hochkant, gekippt nach alpha/beta/gamma, blinkend bei Tastendruck.</p>
+
+<div id="start" hidden>
+  <div id="spots"></div>
+  <div id="join" hidden>
+    <div id="qr"></div>
+    <div><div id="scode">–</div><div id="surl"></div><div id="sstatus"></div></div>
+  </div>
+  <p id="shint"></p>
+  <div class="foot"><button id="startbtn" class="pill">Start</button></div>
+</div>
+
+<div id="menu" hidden>
+  <div id="grid"></div>
+  <div id="bar">
+    <div id="notch"><div id="clock">--:--</div></div>
+    <div id="date"></div>
+    <button id="wiibtn" class="round">Wii</button>
+    <div id="sd">SD</div>
+    <div id="mail" class="round">&#9993;</div>
+  </div>
+</div>
+
+<div id="game" hidden>
+  <canvas id="g3d"></canvas>
+  <canvas id="gc"></canvas>
+  <div id="gresult" hidden>
+    <h2>Ergebnis</h2>
+    <ol id="grank"></ol>
+    <button id="again">Nochmal</button>
+    <button id="gmenu">Menü</button>
+  </div>
+</div>
+
+<div id="target" hidden>
+  <div class="ring"></div>
+  <p>Mit der Spitze hierhin zielen und am Handy „Kalibrieren“ tippen</p>
+</div>
+
+<script src="/wii.js"></script>
+<script src="/qrcode.js"></script>
+<!-- three.js gibt es seit r160 nur als ESM, fruitninja.js bleibt klassisches Script: einmal
+     importieren und als window.THREE ablegen. Module laden deferred und blockieren die
+     klassischen Scripts nicht; fehlt /vendor/, ist das nur ein Konsolenfehler. -->
+<script type="module">import * as THREE from '/vendor/three.module.min.js'; window.THREE = THREE;</script>
+<script src="/schnittfest.js"></script>
+<script src="/fruitninja.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  // ponytail: Dieses <canvas> ist der Platzhalter für den Unity-WebGL-Build.
+  // Der Unity-Build ersetzt später nur das Canvas; die Brücke bleibt exakt so:
+  // window.__wii (state/seq/buttons) wird von Wii.jslib gepollt, seltene Ereignisse
+  // gehen per unityInstance.SendMessage an WiiInput.
+  // Die Schwertspitze rechnet das Spiel selbst aus state[] (Plan 02, „Schnitt-Erkennung“).
+  window.__wii = { state: [null, null, null, null], seq: [0, 0, 0, 0], buttons: [0, 0, 0, 0],
+                   pointer: [null, null, null, null] };
+
+  var KEY = 'wii.host';
+  var host = { room: null, hostToken: null };
+  var slots = [null, null, null, null];
+  var sig = null, wanted = false;                          // wanted: Raum wurde angefordert
+  var view = 'start', debug = Wii.query.has('debug');      // start | menu; ?debug zeigt nur die Tabelle
+  var motion = false;                                      // Motion-Modus: Controller sperren Touch (schwarzes Overlay)
+
+  var $ = function (id) { return document.getElementById(id); };
+  var rows = document.querySelectorAll('#slots tbody tr');
+  // Ein Slot ist „live“, wenn Daten ankommen: per DataChannel oder per Relay ueber den Server
+  // (ohne eigenen TURN der Weg im Buero / hinter symmetrischem NAT). Im Relay ist die PC
+  // geschlossen – deshalb haengt Zeiger, LED und Spielstart nicht an s.pc.
+  function isLive(s) { return !!s && (s.conn === 'connected' || s.conn === 'relay'); }
+  function hint(s) { $('hint').textContent = $('shint').textContent = s || ''; }
+  function status(s) { $('status').textContent = $('sstatus').textContent = s || ''; }
+  function unity(fn, slot) { if (window.unityInstance) window.unityInstance.SendMessage('WiiInput', fn, slot); }
+
+  function save() { try { sessionStorage.setItem(KEY, JSON.stringify(host)); } catch (e) {} }
+  function load() {
+    try { var v = JSON.parse(sessionStorage.getItem(KEY) || 'null'); if (v && v.room && v.hostToken) host = v; } catch (e) {}
+  }
+  function forget() { host = { room: null, hostToken: null }; try { sessionStorage.removeItem(KEY); } catch (e) {} }
+
+  // --- Signaling ------------------------------------------------------------
+  function connect() {
+    if (sig) { sig.ensure(); hello(); return; }        // Socket kann schon offen sein
+    sig = Wii.signal({
+      onBinary: onRelayFrame,
+      onOpen: hello,
+      onMessage: onMessage,
+      onClose: function () { status('Signaling getrennt – verbinde neu …'); }
+    });
+    sig.open();
+  }
+  // Nach RESUME_INVALID bleibt der Socket offen, ohne dass eine Anfrage aussteht: dann
+  // muss der Klick selbst fragen, sonst wirkt „Raum erstellen“ 10 s lang tot (bis der
+  // Server die rollenlose Verbindung schliesst). `wanted` verhindert umgekehrt, dass ein
+  // blosser Reconnect ungefragt einen neuen Raum aufmacht.
+  function hello() {
+    if (!sig || !sig.isOpen()) return;
+    if (host.room && host.hostToken) { hint(''); sig.send({ t: 'resume', room: host.room, token: host.hostToken }); }
+    else if (wanted) { hint(''); sig.send({ t: 'create' }); }
+  }
+
+  function onMessage(m) {
+    switch (m.t) {
+      case 'created': onCreated(m); break;
+      case 'peer-joined': onPeerJoined(m); break;
+      // Nur das Signaling des Controllers ist weg; ein verbundener DataChannel laeuft weiter.
+      case 'peer-reconnecting': if (slots[m.slot] && slots[m.slot].conn !== 'connected') { slots[m.slot].conn = 'reconnect …'; render(); } break;
+      case 'peer-left': dropSlot(m.slot); unity('OnPlayerLeft', m.slot); status('Slot ' + m.slot + ' verlassen (' + m.reason + ')'); break;
+      case 'answer': onAnswer(m); break;
+      case 'ice': if (slots[m.from]) slots[m.from].ice.add(slots[m.from].pc, m.candidate); break;
+      case 'restart': restartSlot(slots[m.from], 'Anforderung von Slot ' + m.from); break;
+      case 'turn': onTurn(m); break;
+      case 'relay': if (slots[m.from]) onEvent(slots[m.from], m.d); break;
+      case 'error': onError(m); break;
+    }
+  }
+
+  function onCreated(m) {
+    host.room = m.room; host.hostToken = m.hostToken; save();
+    showRoom();
+    status(m.resumed ? 'Raum wiederhergestellt' : 'Raum offen – Code am Handy eingeben');
+    if (view === 'start') hint('Spieler 1: mit dem Handy auf „Start“ zeigen und A drücken');
+  }
+  function showRoom() {
+    $('pre').hidden = true; $('room').hidden = false;
+    $('code').textContent = $('scode').textContent = host.room || '–';
+    $('url').textContent = $('surl').textContent = location.origin + '/controller?room=' + (host.room || '');
+    var q = qrcode(0, 'M'); q.addData($('surl').textContent); q.make();
+    $('qr').innerHTML = q.createSvgTag({ cellSize: 4, margin: 0, scalable: true });
+  }
+  function onError(m) {
+    if (m.code === 'RESUME_INVALID') {
+      // Der DataChannel haengt nicht am Signaling: was noch verbunden ist, spielt weiter.
+      // Nur der Raum ist weg – kein Reconnect, kein ICE-Restart, keine neuen Spieler.
+      forget(); wanted = false;                            // erst auf Klick einen neuen Raum
+      // Ohne Raum hat der Socket keine Rolle – der Server wirft ihn nach 10 s raus und der
+      // Client kaeme endlos wieder. Also schliessen; der Klick baut eine frische Verbindung.
+      if (sig) { sig.close(); sig = null; }
+      var kept = 0;
+      for (var i = 0; i < 4; i++) {
+        var s = slots[i];
+        if (s && s.pc && s.pc.connectionState === 'connected') { s.orphan = true; kept++; }
+        else dropSlot(i);
+      }
+      $('pre').hidden = false; $('room').hidden = true;
+      hint(kept
+        ? 'Raum auf dem Server weg – Spiel läuft weiter, kein Reconnect mehr möglich; für neue Spieler neuen Raum erstellen.'
+        : 'Raum nicht mehr da – bitte neu erstellen.');
+      render();
+    } else {
+      status('Fehler: ' + m.code);
+    }
+  }
+
+  // --- PeerConnection je Slot (Console ist immer Offerer) --------------------
+  function onPeerJoined(m) {
+    var s = slots[m.slot];
+    // Signaling-Resume (Console oder Controller kam zurueck) bei laufendem Datenweg: nichts
+    // neu bauen – ein Abriss des Signalings darf die Partie nicht unterbrechen. fresh = der
+    // Controller hat eine neue PC (Reload), dann muss auch unsere neu.
+    if (m.resumed && !m.fresh && isLive(s)) { s.iceServers = m.iceServers; status('Slot ' + m.slot + ' wieder da'); render(); return; }
+    dropSlot(m.slot);                                       // alte PC des Slots zuerst schließen
+    s = slots[m.slot] = {
+      slot: m.slot, color: m.color, iceServers: m.iceServers,
+      pc: null, sensors: null, events: null, ice: null,
+      conn: 'neu', path: '–', lastSeq: null, buttons: 0, cal: false, hover: null, hit: 0,
+      px: null, py: null,                                   // geglättete Zeigerposition
+      frames: 0, fps: 0, wantTurn: false, watchdog: 0, offering: false, orphan: false
+    };
+    newPeer(s);
+    unity('OnPlayerJoined', m.slot);
+    status('Slot ' + m.slot + (m.resumed ? ' wieder da' : ' beigetreten'));
+    render();
+  }
+
+  function newPeer(s) {
+    var p = Wii.peer(s.iceServers);
+    s.pc = p.pc; s.sensors = p.sensors; s.events = p.events; s.ice = Wii.iceQueue();
+    p.pc.onicecandidate = function (e) { if (e.candidate && sig) sig.send({ t: 'ice', to: s.slot, candidate: e.candidate }); };
+    p.pc.onnegotiationneeded = function () { offer(s, p.pc); };   // auch nach restartIce()
+    p.pc.onconnectionstatechange = function () {
+      if (s.pc !== p.pc) return;
+      s.conn = p.pc.connectionState;
+      if (s.conn === 'connected') { clearTimeout(s.watchdog); s.watchdog = 0; }
+      if (s.conn === 'failed') restartSlot(s, 'connectionState failed');
+      render();
+    };
+    p.pc.oniceconnectionstatechange = function () {
+      if (s.pc === p.pc && p.pc.iceConnectionState === 'failed') restartSlot(s, 'iceConnectionState failed');
+    };
+    p.sensors.onmessage = function (e) { onFrame(s, e.data); };
+    p.events.onmessage = function (e) { onEvent(s, e.data); };
+    p.events.onopen = function () { if (motion) sendMode(s); };   // Reconnect mitten im Spiel: Modus erneut setzen
+  }
+
+  function offer(s, pc) {
+    if (s.pc !== pc || s.offering || !sig) return;
+    s.offering = true;
+    pc.createOffer()
+      .then(function (o) { return pc.setLocalDescription(o); })
+      .then(function () { sig.send({ t: 'offer', to: s.slot, sdp: pc.localDescription }); })
+      .catch(function (e) { console.warn('offer', s.slot, e); })
+      .then(function () { s.offering = false; });
+  }
+
+  function onAnswer(m) {
+    var s = slots[m.from]; if (!s || !s.pc) return;
+    s.pc.setRemoteDescription(m.sdp)
+      .then(function () { s.ice.flush(s.pc); })
+      .catch(function (e) { console.warn('answer', m.from, e); });
+  }
+
+  // --- ICE-Restart (Plan 05, Schritt 6) ------------------------------------
+  function restartSlot(s, why) {
+    // Verwaister Slot: ohne Raum kann kein Restart ausgehandelt werden – also aufraeumen.
+    if (s && s.orphan) { console.info('wii: verwaister Slot', s.slot, 'aufgeraeumt –', why); unity('OnPlayerLeft', s.slot); return dropSlot(s.slot); }
+    if (!s || s.wantTurn || !sig) return;
+    if (s.conn === 'relay') return;                          // Relay laeuft – WebRTC ist fuer diesen Slot erledigt
+    console.info('wii: ICE-Restart Slot', s.slot, '–', why);
+    // ponytail: war die PC schon geschlossen, wird sie hier neu gebaut; das kostet
+    // ein zusätzliches Offer, spart aber einen zweiten Zustandspfad.
+    if (!s.pc || s.pc.signalingState === 'closed') newPeer(s);
+    s.wantTurn = true;
+    sig.send({ t: 'turn' });                                 // frische Credentials vor dem Restart
+  }
+
+  function onTurn(m) {
+    for (var i = 0; i < 4; i++) applyTurn(slots[i], m.iceServers);
+  }
+  function applyTurn(s, iceServers) {
+    if (!s || !s.wantTurn || !s.pc) return;
+    s.wantTurn = false;
+    s.iceServers = iceServers;
+    try {
+      var cfg = s.pc.getConfiguration();
+      cfg.iceServers = iceServers;
+      s.pc.setConfiguration(cfg);
+    } catch (e) { console.warn('setConfiguration', e); }
+    s.pc.restartIce();                                       // → negotiationneeded → neues Offer
+    clearTimeout(s.watchdog);
+    s.watchdog = setTimeout(function () {
+      if (s.pc && s.pc.connectionState !== 'connected') {
+        console.warn('wii: Restart erfolglos – Slot', s.slot, 'geschlossen');
+        closePeer(s); s.conn = 'geschlossen'; render();      // Controller lädt neu und kommt per resume
+      }
+    }, 10000);
+  }
+
+  function closePeer(s) {
+    clearTimeout(s.watchdog); s.watchdog = 0;
+    if (s.pc) { try { s.pc.close(); } catch (e) {} }
+    s.pc = null; s.sensors = null; s.events = null; s.cal = false; s.px = null; s.py = null;
+    __wii.state[s.slot] = null; __wii.seq[s.slot] = 0; __wii.buttons[s.slot] = 0;
+  }
+  function dropSlot(i) {
+    var s = slots[i]; if (!s) return;
+    closePeer(s); slots[i] = null; render();
+  }
+
+  // --- Daten vom Controller -------------------------------------------------
+  // Relay-Frame vom Server: Slot-Byte, dann der normale Frame (siehe server.js).
+  function onRelayFrame(buf) {
+    var s = slots[new Uint8Array(buf, 0, 1)[0]];
+    if (!s) return;
+    if (s.conn !== 'relay') {                                // ab jetzt ist der Server der Datenweg
+      // ponytail: WebRTC-Versuche fuer den Slot beenden, sonst kaempfen Restart-Watchdog und
+      // Relay um s.conn/s.pc und der Zeiger verschwindet. Mit coturn (Plan 04) entfaellt das.
+      if (s.pc) closePeer(s);
+      s.conn = 'relay'; render();
+    }
+    onFrame(s, buf.slice(1));
+  }
+  function onFrame(s, data) {
+    if (!data || data.byteLength < Wii.FRAME_BYTES) return;  // unvollständiger Frame
+    var f = Wii.readFrame(data);
+    if (s.lastSeq !== null && Wii.isStale(f.seq, s.lastSeq)) return;   // verspäteter Frame
+    s.lastSeq = f.seq;
+    s.cal = !!(f.flags & 1);                                 // Bit 0 = Controller ist kalibriert
+    __wii.state[s.slot] = f.vals;                            // [t, ax, ay, az, rx, ry, rz, dx, dy, dz]
+    __wii.seq[s.slot] = f.seq;
+    s.frames++;
+  }
+  function onEvent(s, data) {
+    var m; try { m = JSON.parse(data); } catch (e) { return; }
+    // ponytail: eine Nachricht, ein Handler – vor der Kalibrierung sendet der Controller
+    // keine Frames, s.cal bliebe sonst auf dem letzten `true` und das Fadenkreuz aus.
+    if (m.t === 'calib') { s.cal = false; render(); return; }
+    if (m.t !== 'btn') return;
+    if (m.down && m.id === 0) clickAt(s);                    // Taste A = Klick unter dem Zeiger
+    s.buttons = m.down ? (s.buttons | (1 << m.id)) : (s.buttons & ~(1 << m.id));
+    __wii.buttons[s.slot] = s.buttons;                       // gehaltene Tasten – Unity pollt die Maske und bildet Flanken selbst
+  }
+
+  function sendMode(s) {
+    if (!s) return;
+    var txt = JSON.stringify({ t: 'mode', motion: motion });
+    if (s.events && s.events.readyState === 'open') s.events.send(txt);
+    else if (sig) sig.send({ t: 'relay', to: s.slot, d: txt });
+  }
+  // Aufruf aus Spiel/Unity (Wii.jslib → WiiMotionMode) oder DevTools: __wii.motion(true)
+  __wii.motion = function (on) { motion = !!on; for (var i = 0; i < 4; i++) sendMode(slots[i]); };
+
+  // --- Anzeige --------------------------------------------------------------
+  function render() {
+    for (var i = 0; i < 4; i++) {
+      var s = slots[i], r = rows[i];
+      r.querySelector('.sw').style.background = s && s.color ? s.color : '#333';
+      r.querySelector('.col').textContent = s && s.color ? s.color : '–';
+      r.querySelector('.st').textContent = s ? (s.conn + (s.orphan ? ' (ohne Signaling)' : '') + (s.cal ? ' · kalibriert' : '')) : 'frei';
+      r.querySelector('.pa').textContent = s ? s.path : '–';
+      r.querySelector('.fp').textContent = s ? s.fps + ' fps' : '–';
+      var sp = spots[i], live = isLive(s);
+      sp.classList.toggle('on', live);
+      sp.style.setProperty('--c', (s && s.color) || '#34beed');
+      sp.querySelector('span').textContent = !s ? 'frei' : (live ? 'verbunden' : s.conn);
+      sp.querySelectorAll('.leds i')[i].classList.toggle('on', live);   // Spieler-LED wie an der echten Fernbedienung
+    }
+    $('start').hidden = debug || view !== 'start';
+    $('menu').hidden = debug || view !== 'menu';
+    $('game').hidden = debug || view !== 'game';
+    $('join').hidden = !host.room;
+  }
+
+  // fps jede Sekunde, selectedPath alle 5 s, Telemetrie-Log alle 30 s.
+  var tick = 0;
+  setInterval(function () {
+    tick++;
+    for (var i = 0; i < 4; i++) {
+      var s = slots[i]; if (!s) continue;
+      s.fps = s.frames; s.frames = 0;
+      if (tick % 5 === 0) pollPath(s, tick % 30 === 0);
+    }
+    clock(); render();
+  }, 1000);
+  function pollPath(s, log) {
+    if (!s.pc) { s.path = s.conn === 'relay' ? 'relay/ws' : '–'; return; }
+    Wii.selectedPath(s.pc).then(function (p) {
+      s.path = p;
+      if (log) console.info('wii telemetry: slot', s.slot, 'selectedPath', p, 'state', s.conn);
+    });
+  }
+
+  // --- Zeiger je Slot (Maus-Ersatz für die Console) -------------------------
+  // ponytail: der Zeiger nutzt die fusionierte Orientierung statt einer Gyro-Integration –
+  // einfacher, aber driftanfällig; dagegen hilft „Neu kalibrieren“ am Handy. Und: Strahlmodell
+  // mit fester virtueller Entfernung; die echte Distanz und Höhe zum Bildschirm steckt allein
+  // in der Kalibrier-Referenz (Spitze auf die Bildschirmmitte).
+  var DIST = 0.87;                                         // Entfernung in Bildschirmbreiten: ±30° Gier = Breite
+  var SMOOTH = 0.5;                                        // Tiefpass je Frame gegen Sensor-Zittern
+  var RAD = Math.PI / 180;
+  var DMIN = Math.cos(80 * RAD);                           // flacher als 80° ist der Strahl fast parallel zur Ebene
+  var pts = [], hov = [];
+  for (var pi = 0; pi < 4; pi++) {
+    var pd = document.createElement('div');
+    pd.className = 'wii-pointer'; pd.hidden = true;
+    pd.innerHTML = '<svg viewBox="0 0 96 122"><use href="#hand"/></svg><b>' + (pi + 1) + '</b>';
+    document.body.appendChild(pd); pts.push(pd);
+  }
+  fetch('/cursors.svg').then(function (r) { return r.text(); }).then(function (t) { document.body.insertAdjacentHTML('beforeend', t); });
+  function clampTo(v, m) { return v < 0 ? 0 : (v > m ? m : v); }
+  function updatePointers() {
+    // Im Spiel sind die Zeiger aus (Plan 02: das Spiel zeichnet die Schwertspitzen selbst),
+    // ohne Hover-Rahmen, ohne Klickziel und ohne Fadenkreuz. Auf dem Ergebnis wieder normal.
+    var play = view === 'game' && $('gresult').hidden;
+    var W = innerWidth, H = innerHeight, D = DIST * W, now = performance.now(), next = [], color = null, ask = false;
+    for (var i = 0; i < 4; i++) {
+      var s = slots[i], p = pts[i], v = s && s.cal ? __wii.state[i] : null;
+      if (isLive(s) && !s.cal) ask = true;                  // verbunden, aber (noch) nicht kalibriert
+      if (!v) { p.hidden = true; if (s) { s.hover = null; s.px = null; } __wii.pointer[i] = null; continue; }
+      // v[7..9] ist die Richtung der Handy-Längsachse in der Kalibrier-Basis: x rechts,
+      // y zur Bildschirmmitte, z oben. Der Strahl trifft die Bildschirmebene in D·dx/dy
+      // neben und D·dz/dy über der Mitte – exakt, ohne Gier/Nick-Singularität.
+      var dx = v[7], dy = v[8] < DMIN ? DMIN : v[8], dz = v[9];
+      var xr = W / 2 + D * dx / dy;
+      var yr = H / 2 - D * dz / dy;
+      var x = clampTo(xr, W - 1);
+      var y = clampTo(yr, H - 1);
+      if (s.px === null) { s.px = x; s.py = y; }             // erster Frame: direkt setzen
+      else { s.px += (x - s.px) * SMOOTH; s.py += (y - s.py) * SMOOTH; }
+      x = s.px; y = s.py;
+      p.hidden = play;
+      p.style.setProperty('--pc', s.color || '#008cff');
+      p.style.transform = 'translate(' + (x - 7) + 'px,' + (y - 1) + 'px)' + (now < s.hit ? ' scale(1.2)' : '');
+      __wii.pointer[i] = [x / W, y / H];                    // normiert 0–1, später für Unity
+      s.hover = play ? null : document.elementFromPoint(x, y);   // der Zeiger selbst ist pointer-events:none
+      p.classList.toggle('link', !!(s.hover && s.hover.closest('button, a, input, select, textarea, label, [role=button]')));
+      // ponytail: body/html bleiben unmarkiert – ein Outline um die ganze Seite sähe kaputt aus.
+      if (s.hover && s.hover !== document.body && s.hover !== document.documentElement) { next.push(s.hover); color = s.color; }
+    }
+    for (var j = 0; j < hov.length; j++) if (next.indexOf(hov[j]) < 0) hov[j].classList.remove('wii-hover');
+    for (var k = 0; k < next.length; k++) next[k].classList.add('wii-hover');
+    if (color) document.documentElement.style.setProperty('--hov', color);   // mehrere Zeiger: letzte Farbe
+    hov = next;
+    $('target').hidden = play || !ask;
+  }
+  var clicker = null;                                     // Slot, dessen Zeiger gerade klickt (null = Maus)
+  function clickAt(s) {
+    var el = s.hover && s.hover.closest('button, a, input, select, textarea, label, [role=button]');
+    if (!el) return;
+    if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') el.focus();
+    clicker = s.slot; el.click(); clicker = null;
+    s.hit = performance.now() + 150;                       // kurze Bestätigung: Zeiger wird größer
+  }
+
+  // --- Start-Screen: 4 Fernbedienungs-Plätze, Start legt den Raum an bzw. öffnet das Menü ---
+  var spots = [];
+  for (var si = 0; si < 4; si++) {
+    var sp = document.createElement('div');
+    sp.className = 'spot';
+    sp.innerHTML = '<div class="remote"><i class="pw"></i><i class="a"></i><i class="mi"></i><i class="ho"></i><i class="pl"></i>'
+                 + '<i class="sp"></i><i class="b1"></i><i class="b2"></i>'
+                 + '<div class="leds"><i></i><i></i><i></i><i></i></div></div><b>Spieler ' + (si + 1) + '</b><span>frei</span>';
+    $('spots').appendChild(sp); spots.push(sp);
+  }
+  $('startbtn').addEventListener('click', function () {
+    if (!host.room) return $('create').click();            // Raum anlegen – Handler unten, keepAwake bleibt im Klick
+    if (clicker !== 0) return hint('Nur Spieler 1 kann starten – mit dem Handy auf „Start“ zeigen und A drücken');
+    view = 'menu'; hint(''); render();                      // Spieler 1 hat Start gedrückt → Wii-Menü
+  });
+
+  // --- Wii-Menü: 12 Kanal-Kacheln, verhalten sich wie die Beispiel-Buttons -----
+  // ponytail: Farbverläufe statt Kanal-Bilder; echte Kanäle bekommen später ein <img> im Button.
+  var TILES = [['schnittfest', 'Schnittfest'], ['fruitninja', 'Fruit Ninja']];   // Kachel-Index → Spiel
+  for (var ci = 0; ci < 12; ci++) {
+    var ch = document.createElement('button');
+    var tile = TILES[ci];
+    ch.className = tile ? 'ch' : 'sample ch';               // Spiel-Kacheln zählen nicht hoch
+    ch.textContent = tile ? tile[1] : 'Kanal ' + (ci + 1);
+    if (tile) { ch.dataset.game = tile[0]; ch.addEventListener('click', startGame); }
+    ch.style.background = 'linear-gradient(160deg, hsl(' + ci * 30 + ',70%,60%), hsl(' + (ci * 30 + 40) + ',70%,40%))';
+    $('grid').appendChild(ch);
+  }
+  function clock() {
+    var d = new Date();
+    $('clock').textContent = d.toLocaleTimeString('de', { hour: '2-digit', minute: '2-digit' });
+    $('date').textContent = d.toLocaleDateString('de', { weekday: 'short', day: 'numeric', month: 'numeric' });
+  }
+  clock();
+  $('wiibtn').addEventListener('click', function () { leaveGame(); view = 'start'; render(); });   // zurück zum Start-Screen, Spiel aus, Touch wieder frei
+
+  // --- Spiel: Lebenszyklus nach Plan 01, Regeln und Zeichnen in den Spiel-Skripten ---
+  // ponytail: Motion-Modus, Ansicht und Zeiger gehören hier her, damit jedes weitere
+  // Spiel denselben Pfad nimmt; das Spiel selbst kennt __wii.motion nicht.
+  var GAMES = { schnittfest: 'Schnittfest', fruitninja: 'FruitNinja' };   // Kachel → globales Spiel-Objekt
+  var gplayers = [];                                       // Spieler dieser Partie: [{ slot, color }]
+  var current = null, lastGame = null;                     // laufendes Spiel, zuletzt gestartete Kachel
+  function startGame(ev) {
+    var el = (ev && ev.currentTarget) || this;             // Kachel; „Nochmal“ hat kein data-game
+    var name = (el && el.dataset && el.dataset.game) || lastGame;
+    gplayers = [];
+    for (var i = 0; i < 4; i++) {
+      var s = slots[i];
+      if (isLive(s) && s.cal) gplayers.push({ slot: i, color: s.color || '#4af' });
+    }
+    if (!gplayers.length) return hint('Kein Handy kalibriert');
+    if (!window[GAMES[name]]) return hint('Spiel fehlt – out/' + name + '.js nicht geladen');
+    if (name === 'fruitninja' && !window.THREE) return hint('three.js fehlt – out/vendor/ prüfen');
+    current = window[GAMES[name]]; lastGame = name;
+    hint(''); view = 'game'; $('gresult').hidden = true; render();   // erst zeigen, dann messen: das Canvas braucht Größe
+    __wii.motion(true);                                    // Plan 01, Schritt 2
+    // ponytail: beide Optionen an jedes Spiel – jedes ignoriert die fremde.
+    current.start({                                        // „Nochmal“: start() räumt selbst auf
+      canvas: $('gc'), canvas3d: $('g3d'), players: gplayers,
+      rounds: Number(Wii.query.get('rounds')) || undefined,          // ?rounds=2 kürzt die Partie
+      lives: Number(Wii.query.get('lives')) || undefined,            // ?lives=1 kürzt Fruit Ninja
+      onEnd: endGame
+    });
+  }
+  function endGame(ranking) {
+    __wii.motion(false);                                   // Plan 01, Schritt 3: Zeiger darf wieder klicken
+    var ol = $('grank'); ol.innerHTML = '';
+    for (var i = 0; i < (ranking || []).length; i++) {
+      var r = ranking[i], li = document.createElement('li');
+      li.dataset.slot = r.slot; li.dataset.score = r.score;
+      li.textContent = 'Spieler ' + (r.slot + 1) + ' · ' + r.score;
+      li.style.color = colorOf(r.slot);
+      ol.appendChild(li);
+    }
+    $('gresult').hidden = false;                           // Ergebnisbox sichtbar = Zeiger sichtbar
+  }
+  function colorOf(slot) {
+    for (var i = 0; i < gplayers.length; i++) if (gplayers[i].slot === slot) return gplayers[i].color;
+    return '#eee';
+  }
+  function leaveGame() {                                   // „Menü“ und Wii-Knopf: Spiel aus, Handys frei
+    if (current) current.stop();
+    $('gresult').hidden = true;
+    __wii.motion(false);
+  }
+  $('again').addEventListener('click', startGame);
+  $('gmenu').addEventListener('click', function () { leaveGame(); view = 'menu'; render(); });
+
+  // Beispiel-Buttons: jeder Klick zählt hoch und leuchtet kurz auf.
+  Array.prototype.forEach.call(document.querySelectorAll('.sample'), function (el) {
+    var base = el.textContent, n = 0;
+    el.addEventListener('click', function () {
+      el.textContent = base + ' · ' + (++n) + '×';
+      el.classList.add('hit');
+      setTimeout(function () { el.classList.remove('hit'); }, 150);
+    });
+  });
+
+  var ctx = $('c').getContext('2d');
+  ctx.font = '13px system-ui, sans-serif';
+  var PW = 72, PH = 144;                                   // Handy hochkant – so, wie es in der Hand liegt
+  function clamp(v, m) { return v < -m ? -m : (v > m ? m : v); }
+  (function draw() {
+    var w = ctx.canvas.width, h = ctx.canvas.height, now = performance.now();
+    ctx.clearRect(0, 0, w, h);
+    for (var i = 0; i < 4; i++) {
+      var s = slots[i], x = (i + 0.5) * w / 4, live = isLive(s);
+      // Erst nach der Kalibrierung sind die Winkel relativ zur Nulllage – vorher gerade zeichnen.
+      var v = live && s.cal ? __wii.state[i] : null;        // [t, ax, ay, az, rx, ry, rz, dx, dy, dz]
+      // Gieren und Nicken aus der Richtung der Längsachse; Rollen steckt nicht in d
+      // (es dreht nur um diese Achse) – die Zeichnung kippt also nicht mehr seitlich.
+      var alpha = v ? Math.atan2(v[7], v[8]) / RAD : 0;
+      var beta = v ? Math.asin(clamp(v[9], 1)) / RAD : 0;
+      ctx.save();
+      ctx.translate(x + clamp(alpha, 60), h / 2 - 10);                // Gier: seitlich versetzen
+      ctx.scale(1, Math.max(0.25, Math.cos(beta * RAD)));             // Nick: nach vorn/hinten stauchen
+      ctx.beginPath(); ctx.roundRect(-PW / 2, -PH / 2, PW, PH, 12);   // Gehäuse
+      if (live) { ctx.fillStyle = s.color || '#4af'; ctx.fill(); }
+      else { ctx.lineWidth = 2; ctx.strokeStyle = '#3a3a3a'; ctx.stroke(); }
+      ctx.beginPath(); ctx.roundRect(-28, -PH / 2 + 12, 56, 112, 6);  // Display
+      ctx.fillStyle = live ? '#0d1117' : '#1e1e1e'; ctx.fill();
+      ctx.beginPath(); ctx.arc(0, PH / 2 - 12, 5, 0, 2 * Math.PI);    // Home-Punkt
+      ctx.fillStyle = live ? 'rgba(0,0,0,.45)' : '#2a2a2a'; ctx.fill();
+      if (live && s.buttons && (now % 300) < 150) {
+        ctx.lineWidth = 6; ctx.strokeStyle = '#fff';
+        ctx.beginPath(); ctx.roundRect(-PW / 2 - 6, -PH / 2 - 6, PW + 12, PH + 12, 16); ctx.stroke();
+      }
+      ctx.restore();
+      ctx.fillStyle = '#777'; ctx.textAlign = 'center';
+      ctx.fillText('Slot ' + i + (s ? ' · ' + s.conn : ' · frei'), x, h - 14);
+    }
+    updatePointers();
+    requestAnimationFrame(draw);
+  })();
+
+  // --- Start / Lebenszyklus -------------------------------------------------
+  $('create').addEventListener('click', function () {
+    Wii.keepAwake();                                        // im Klick-Handler, sonst blockt iOS
+    wanted = true;
+    hint('verbinde …');
+    connect();
+  });
+
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState !== 'visible') return;
+    Wii.keepAwake();
+    if (sig) sig.ensure();
+  });
+  addEventListener('pageshow', function (e) { if (e.persisted && sig) sig.ensure(); });
+  addEventListener('online', function () { if (sig) sig.ensure(); });
+
+  load();
+  render();
+  if (host.room && host.hostToken) { wanted = true; showRoom(); status('stelle Raum wieder her …'); connect(); }   // Reload → resume
+})();
+</script>
+</body>
+</html>

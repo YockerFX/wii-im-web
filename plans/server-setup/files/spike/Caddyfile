@@ -1,0 +1,11 @@
+# Spike (Plan 10): caddy run   – HTTPS mit lokaler CA für https://<LAN_IP>, statische Dateien aus diesem Ordner, /ws → relay.js
+<LAN_IP> {
+	tls internal
+	handle /ws {
+		reverse_proxy localhost:8080
+	}
+	handle {
+		root * .
+		file_server
+	}
+}

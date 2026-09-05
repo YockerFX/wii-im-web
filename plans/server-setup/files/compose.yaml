@@ -1,0 +1,95 @@
+# Wii im Web – Produktion. Start: docker compose up -d --build   (Repo-Root = /opt/wii)
+# Werte kommen aus .env (siehe .env.example). Lokal: docker compose -f compose.yaml -f compose.dev.yaml up --build
+services:
+  caddy:
+    image: caddy:2.11.4-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"          # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy/site.caddy:/etc/caddy/site.caddy:ro
+      - ./static:/srv:ro       # enthält releases/<sha>/ und den relativen Symlink current -> releases/<sha>
+      - caddy_data:/data       # Zertifikate + lokale CA – nie löschen
+      - caddy_config:/config
+    security_opt: ["no-new-privileges:true"]
+
+  signaling:
+    build: ./signaling
+    image: wii-signaling
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 15s
+    env_file: .env
+    environment:
+      TURN_HOST: turn.${DOMAIN}
+      ALLOWED_ORIGINS: https://${DOMAIN}
+      DATABASE_URL: postgres://wii:${POSTGRES_PASSWORD}@postgres:5432/wii
+      S3_ENDPOINT: http://garage:3900
+      S3_REGION: garage
+    expose: ["8080"]           # nie `ports:` – X-Forwarded-For darf nur von Caddy kommen
+    depends_on:
+      postgres:
+        condition: service_healthy
+    read_only: true
+    tmpfs: ["/tmp"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    pids_limit: 256
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  coturn:
+    image: coturn/coturn:4.17.2-r0
+    restart: unless-stopped
+    network_mode: host         # UDP-Relay-Range ohne Port-Mapping; Firewall = Hetzner Cloud Firewall (01)
+    command:
+      - -c
+      - /etc/coturn/turnserver.conf
+      - --log-file=stdout
+      - --realm=turn.${DOMAIN}
+      - --listening-ip=${SERVER_IPV4}
+      - --listening-ip=${SERVER_IPV6}
+      - --relay-ip=${SERVER_IPV4}
+      - --relay-ip=${SERVER_IPV6}
+      - --static-auth-secret=${TURN_SECRET}
+    volumes:
+      - ./turnserver.conf:/etc/coturn/turnserver.conf:ro
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+
+  postgres:
+    image: postgres:18-alpine        # Major-Version pinnen: Upgrade = Dump + Restore (Plan 11)
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: wii
+      POSTGRES_USER: wii
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pg_data:/var/lib/postgresql   # postgres:18 nutzt /var/lib/postgresql als Volume-Pfad
+    shm_size: 128m
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wii -d wii"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  garage:
+    image: dxflrs/garage:v2.3.0      # S3-kompatibler Bucket, self-hosted (Plan 11)
+    restart: unless-stopped
+    volumes:
+      - ./garage.toml:/etc/garage.toml:ro
+      - ./garage:/var/lib/garage      # meta/ + data/; Backup per rsync vom Heimgerät
+    security_opt: ["no-new-privileges:true"]
+
+volumes:
+  caddy_data:
+  caddy_config:
+  pg_data:

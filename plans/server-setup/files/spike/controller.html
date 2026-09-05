@@ -1,0 +1,52 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Spike Controller</title>
+<style>body{font:16px system-ui;margin:0;padding:16px;background:#111;color:#eee}button{font-size:24px;padding:24px;width:100%}pre{font-size:14px}</style>
+<button id="start">Start (Sensoren + Verbindung)</button>
+<pre id="log">–</pre>
+<script>
+// Spike (Plan 10): Sensor-Frames (44 Byte, 60 Hz) über einen unzuverlässigen DataChannel an die Console; Ping-Echo über den zuverlässigen Kanal.
+const log = s => document.getElementById('log').textContent = s;
+const ice = new URLSearchParams(location.search);
+const iceServers = ice.get('turn') ? [{ urls: ice.get('turn'), username: ice.get('user'), credential: ice.get('cred') }] : ice.get('ice') ? [{ urls: ice.get('ice') }] : [];
+let pc, sensors, events, seq = 0, sent = 0, ori = [0, 0, 0], wakeLock;
+const sig = new WebSocket(`wss://${location.host}/ws`);
+const send = m => sig.readyState === 1 && sig.send(JSON.stringify({ role: 'controller', ...m }));
+
+document.getElementById('start').onclick = async () => {
+  if (!isSecureContext) return log('Bitte über https:// öffnen');
+  for (const E of [DeviceMotionEvent, DeviceOrientationEvent])
+    if (typeof E?.requestPermission === 'function' && await E.requestPermission() !== 'granted') return log('Sensor-Berechtigung abgelehnt');
+  wakeLock = await navigator.wakeLock?.request('screen').catch(() => null);
+  addEventListener('deviceorientation', e => { ori = [e.alpha ?? 0, e.beta ?? 0, e.gamma ?? 0]; });
+  addEventListener('devicemotion', onMotion);
+  send({ t: 'hello' });                                   // Console antwortet mit offer
+  log('warte auf Console …');
+};
+
+sig.onmessage = async ({ data }) => {
+  const m = JSON.parse(data); if (m.role !== 'console') return;
+  if (m.t === 'offer') {
+    pc = new RTCPeerConnection({ iceServers, iceTransportPolicy: ice.get('forceRelay') ? 'relay' : 'all' });
+    sensors = pc.createDataChannel('sensors', { negotiated: true, id: 0, ordered: false, maxRetransmits: 0 });
+    events = pc.createDataChannel('events', { negotiated: true, id: 1 });
+    events.onmessage = ({ data }) => { const p = JSON.parse(data); if (p.t === 'ping') events.send(JSON.stringify({ t: 'pong', ts: p.ts })); };
+    pc.onicecandidate = e => e.candidate && send({ t: 'ice', candidate: e.candidate });
+    pc.onconnectionstatechange = () => log(`pc: ${pc.connectionState}`);
+    await pc.setRemoteDescription(m.sdp);
+    await pc.setLocalDescription(await pc.createAnswer());
+    send({ t: 'answer', sdp: pc.localDescription });
+  } else if (m.t === 'ice' && pc) await pc.addIceCandidate(m.candidate).catch(() => {});
+};
+
+const buf = new ArrayBuffer(44), dv = new DataView(buf);
+function onMotion(e) {
+  if (!sensors || sensors.readyState !== 'open') return;
+  seq = (seq + 1) & 0xffff;
+  dv.setUint16(0, seq, true); dv.setUint16(2, 0, true); dv.setFloat32(4, performance.now(), true);
+  const a = e.acceleration ?? {}, r = e.rotationRate ?? {};
+  [a.x, a.y, a.z, r.alpha, r.beta, r.gamma, ...ori].forEach((v, i) => dv.setFloat32(8 + 4 * i, v ?? 0, true));
+  if (sensors.bufferedAmount < 4 * 44) { sensors.send(buf); sent++; }
+  if (seq % 60 === 0) log(`pc: ${pc.connectionState} | gesendet: ${sent} | interval: ${e.interval?.toFixed?.(1) ?? '?'} ms`);
+}
+document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && navigator.wakeLock?.request('screen').catch(() => {}));
+</script>

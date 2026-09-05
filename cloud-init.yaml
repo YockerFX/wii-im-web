@@ -1,0 +1,24 @@
+#cloud-config
+# Hetzner: hcloud server create ... --user-data-from-file cloud-init.yaml
+# Richtet ein: SSH nur per Key, unattended-upgrades mit Reboot 04:30 UTC, Docker + Compose, Log-Rotation, 2 GB Swap, /opt/wii
+package_update: true
+package_upgrade: true
+packages: [git, unattended-upgrades, curl]
+write_files:
+  - path: /etc/ssh/sshd_config.d/10-hardening.conf
+    content: |
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin prohibit-password
+  - path: /etc/apt/apt.conf.d/52wii-reboot
+    content: |
+      Unattended-Upgrade::Automatic-Reboot "true";
+      Unattended-Upgrade::Automatic-Reboot-Time "04:30";
+  - path: /etc/docker/daemon.json
+    content: |
+      { "log-driver": "json-file", "log-opts": { "max-size": "10m", "max-file": "3" } }
+runcmd:
+  - systemctl restart ssh
+  - curl -fsSL https://get.docker.com | sh
+  - fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile && echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  - mkdir -p /opt/wii

@@ -1,0 +1,7 @@
+{
+	email <EMAIL>
+}
+
+<DOMAIN> {
+	import /etc/caddy/site.caddy
+}

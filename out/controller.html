@@ -1,0 +1,531 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Wii im Web – Controller</title>
+<style>
+  :root { color-scheme: dark }
+  * { box-sizing: border-box }
+  html, body { height: 100%; margin: 0 }
+  body { font: 16px/1.4 system-ui, sans-serif; background: #111; color: #fff;
+         display: flex; flex-direction: column; touch-action: none; user-select: none; -webkit-user-select: none;
+         padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left) }
+  /* Die Statuszeile liegt ueber dem Motion-Overlay (z-index 20), damit man im Spiel sieht,
+     ob Frames fliessen. pointer-events: none, sonst schluckt sie die Entsperr-Geste. */
+  #bar { position: relative; z-index: 21; pointer-events: none;
+         background: rgba(0,0,0,.55); padding: 6px 12px; font-size: 11px; color: #666;
+         display: flex; justify-content: space-between; gap: 12px }
+  #ver { color: #555 }                                      /* welcher Stand liegt auf dem Handy? */
+  #msg { background: #a33; padding: 10px 14px; font-size: 14px }
+  section { flex: 1; display: flex; flex-direction: column; padding: 16px; gap: 14px; min-height: 0 }
+  #join { justify-content: center; align-items: stretch }
+  label { font-size: 14px; color: #bbb }
+  /* body steht auf touch-action/user-select: none – das Eingabefeld braucht beides zurueck,
+     sonst setzt iOS keinen Cursor und die native Tastatur geht gar nicht erst auf. */
+  input { font: 700 40px/1 ui-monospace, monospace; letter-spacing: 8px; text-align: center; text-transform: uppercase;
+          width: 100%; padding: 14px 0; border-radius: 12px; border: 2px solid #444; background: #1b1b1b; color: #fff;
+          user-select: text; -webkit-user-select: text; touch-action: manipulation }
+  button { font: 600 20px system-ui, sans-serif; border: 0; border-radius: 12px; background: #4af; color: #012; padding: 18px; cursor: pointer }
+  #hint { color: #f99; min-height: 1.4em; font-size: 14px }
+  /* Motion-Modus: schwarzes Overlay schluckt alle Touches (spart auf OLED Akku), 2 s halten entsperrt */
+  #lock { position: fixed; inset: 0; z-index: 20; background: #000; color: #333; font-size: 14px; text-align: center;
+          display: flex; align-items: flex-end; justify-content: center; padding: 32px; touch-action: none; -webkit-touch-callout: none }
+  #lock.arm { color: #4af }
+  /* --- Wiimote-Schale: Power, A, −/Home/+, Speaker, 1, 2, Spieler-LEDs -----
+     ponytail: alles CSS, kein Bild. Jede Groesse ist ein Vielfaches von --u, und --u
+     haengt an der ENGEREN Bildschirmseite – so bleiben alle Verhaeltnisse gleich und
+     nichts laeuft ueber, egal ob schmales oder kurzes Handy. Prozente taugen hier
+     nicht: senkrechte Prozente skalieren mit der Hoehe, waagerechte mit der Breite,
+     und bei 1:2-Displays zieht das die Schale auseinander. */
+  #mote { --u: min(1vw, 0.44vh); width: 100%; height: 100%; overflow: hidden;
+          display: flex; flex-direction: column; align-items: center; gap: calc(3 * var(--u));
+          padding: calc(4 * var(--u)) calc(5 * var(--u));
+          background: linear-gradient(#fff, #eceef0 60%, #dfe2e6) }
+  #play { padding: 0 }
+  #mote button { touch-action: none; color: #6a7078; font-family: system-ui, sans-serif; padding: 0;
+                 background: linear-gradient(#fdfdfd, #e2e5e9); border: 1px solid #c3c8ce;
+                 box-shadow: 0 2px 0 #bcc1c7, 0 3px 5px rgba(0,0,0,.18) }
+  #mote button:active, #mote .on { background: linear-gradient(#d6dade, #e8ebee);
+                 box-shadow: inset 0 2px 4px rgba(0,0,0,.25); transform: translateY(2px) }
+  #mote .rnd { border-radius: 50%; aspect-ratio: 1; flex: 0 0 auto }
+  #lockbtn { align-self: flex-start; width: calc(11 * var(--u)); font-size: calc(6 * var(--u)); color: #8b9096 }
+  .lbl { align-self: flex-start; padding-left: var(--u); color: #9aa0a6;
+         font: 700 calc(3 * var(--u))/1 system-ui, sans-serif; letter-spacing: calc(.4 * var(--u)) }
+  /* Die drei auto-Margins teilen die Resthoehe gleichmaessig: ueber A, unter A, ueber 1.
+     Wird es eng, fallen sie auf 0 und die Schale bleibt trotzdem vollstaendig. */
+  .k[data-id="0"] { width: calc(46 * var(--u)); font: 700 calc(12 * var(--u)) system-ui, sans-serif;
+                    margin: auto 0 }
+  #mid { display: flex; align-items: center; justify-content: space-between; width: calc(62 * var(--u)) }
+  #mid button { width: calc(14 * var(--u)); font-size: calc(7 * var(--u)) }
+  #recal { border-radius: calc(3 * var(--u)) !important; color: #2b7fd4 }
+  /* Attrappe – die echte Wiimote hat hier ihren Lautsprecher: 5 x 7 Punkte */
+  #speaker { width: calc(26 * var(--u)); aspect-ratio: 5 / 7; flex: 0 0 auto; opacity: .9;
+             background-image: radial-gradient(#b9bec4 calc(.4 * var(--u)), transparent calc(.45 * var(--u)));
+             background-size: 20% 14.3% }
+  .k[data-id="2"], .k[data-id="3"] { width: calc(26 * var(--u)); font: 600 calc(7 * var(--u)) system-ui, sans-serif }
+  .k[data-id="2"] { margin-top: auto }
+  #leds { display: flex; gap: calc(3.4 * var(--u)); padding: calc(2 * var(--u)) 0 }
+  #leds i { width: calc(3.4 * var(--u)); aspect-ratio: 1; background: #b6bbc1; box-shadow: inset 0 1px 1px rgba(0,0,0,.3) }
+  #leds i.on { background: var(--slot, #4af); box-shadow: 0 0 calc(2 * var(--u)) var(--slot, #4af) }
+  #wordmark { font: italic 700 calc(5 * var(--u)) system-ui, sans-serif; color: #b0b5bb; letter-spacing: calc(-.2 * var(--u)) }
+  #cal { justify-content: center; text-align: center }
+  #cal p { color: #bbb; margin: 0 }
+  #calbtn { padding: 28px; font-size: 24px }
+  /* ponytail: Querformat kriegt ein Overlay statt eines zweiten Layouts – der
+     Controller ist nur hochkant gedacht, das Overlay deckt Eingabe und Tasten ab. */
+  #rot { display: none }
+  @media (orientation: landscape) {
+    #rot { display: flex; position: fixed; inset: 0; z-index: 9; background: #111; color: #fff;
+           align-items: center; justify-content: center; padding: 24px; text-align: center;
+           font: 600 22px/1.4 system-ui, sans-serif }
+  }
+  [hidden] { display: none !important }
+</style>
+</head>
+<body>
+
+<div id="bar"><span id="state">nicht verbunden</span><small id="ver"></small><span id="rate">–</span></div>
+<div id="msg" hidden></div>
+<div id="rot">Bitte Handy hochkant halten</div>
+<div id="lock" hidden>Motion-Modus – zum Entsperren 2 s gedrückt halten</div>
+
+<section id="join">
+  <label for="code">Raum-Code (5 Zeichen)</label>
+  <input id="code" placeholder="ABCDE" maxlength="5" enterkeyhint="go"
+         autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false">
+  <button id="start">Start</button>
+  <p id="hint"></p>
+</section>
+
+<section id="cal" hidden>
+  <p>Mit der Handy-Spitze auf die Mitte des Bildschirms zeigen, ruhig halten, dann tippen.</p>
+  <button id="calbtn">Kalibrieren</button>
+</section>
+
+<section id="play" hidden>
+  <div id="mote">
+    <button id="lockbtn" class="rnd" title="Motion-Modus (Touch sperren)">&#9211;</button>
+    <span class="lbl">POWER</span>
+    <button class="k rnd" data-id="0">A</button>
+    <div id="mid">
+      <button class="k rnd" data-id="5">&minus;</button>
+      <button id="recal" title="Neu kalibrieren">&#8962;</button>
+      <button class="k rnd" data-id="4">+</button>
+    </div>
+    <div id="speaker"></div>
+    <button class="k rnd" data-id="2">1</button>
+    <button class="k rnd" data-id="3">2</button>
+    <div id="leds"><i></i><i></i><i></i><i></i></div>
+    <div id="wordmark">Wii im Web</div>
+  </div>
+</section>
+
+<script src="/wii.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var $ = function (id) { return document.getElementById(id); };
+  // ponytail: Testmodus ?fake=1 – synthetische 60-Hz-Frames statt echter Sensoren,
+  // damit der Prototyp mit zwei Tabs auf http://localhost:8080 komplett durchläuft
+  // (localhost gilt als Secure Context, Sensoren gibt es dort trotzdem keine).
+  var fake = Wii.query.get('fake') === '1';
+  // ponytail: ?fake=1&hold=A,B friert die Zeigerichtung auf feste Werte ein – A/B sind
+  // Azimut/Elevation in Grad (az = −A, el = B), deterministisch für den E2E-Test statt
+  // der wandernden Sinus-Werte.
+  var hold = (Wii.query.get('hold') || '').split(',').map(Number);
+  var held = hold.length === 2 && isFinite(hold[0]) && isFinite(hold[1]);
+
+  var KEY = 'wii.guest', RELOAD_KEY = 'wii.reload', LOCK_KEY = 'wii.lock';
+  var me = { room: null, token: null };
+  var slot = null, color = null, iceServers = [];
+  var pc = null, sensors = null, events = null, ice = null, remoteFp = null;
+  var relayT = 0;                                 // Frist, in der WebRTC stehen muss
+  var relayOnly = Wii.query.get('relay') === '1';  // Testschalter: DataChannel ueberspringen
+  var relayed = relayOnly;                        // WebRTC gescheitert -> Daten ueber das Signaling
+  var sig = null, restarts = 0, discT = 0, sending = true, orphan = false;
+  var seq = 0, ori = [0, 0], ref = null, frames = 0, fps = 0;   // ref = Kalibrier-Basis, null = nicht kalibriert
+  var RAD = Math.PI / 180;
+  var fbuf = new ArrayBuffer(Wii.FRAME_BYTES), fdv = new DataView(fbuf);
+
+  function hint(s) { $('hint').textContent = s || ''; }
+  function status(s) { $('state').textContent = s || ''; }
+  function banner(s) { var e = $('msg'); e.textContent = s || ''; e.hidden = !s; }
+  function save() { try { sessionStorage.setItem(KEY, JSON.stringify(me)); } catch (e) {} }
+  function load() { try { var v = JSON.parse(sessionStorage.getItem(KEY) || 'null'); if (v && v.room) me = v; } catch (e) {} }
+  function forget() { me = { room: null, token: null }; try { sessionStorage.removeItem(KEY); } catch (e) {} }
+
+  // --- Signaling ------------------------------------------------------------
+  function connect() {
+    if (sig) { sig.ensure(); hello(); return; }        // Socket kann schon offen sein
+    sig = Wii.signal({
+      onOpen: hello,
+      onMessage: onMessage,
+      onBinary: function () {},                   // die Console sendet nichts binaer
+      onClose: function () { status('Signaling getrennt – verbinde neu …'); }
+    });
+    sig.open();
+  }
+  // Nach einem Fehler ohne Rollenwechsel (RATE_LIMITED, SERVER_FULL) bleibt der Socket
+  // offen, ohne dass eine Anfrage aussteht – dann muss der Klick selbst fragen, sonst
+  // wirkt „Start“ 10 s lang tot (bis der Server die rollenlose Verbindung schliesst).
+  function hello() {
+    if (!sig || !sig.isOpen()) return;
+    // fresh = die Console soll ihre PeerConnection neu bauen. Nur noetig, wenn unsere nicht
+    // (mehr) steht: eine verbundene PC ueberlebt den Signaling-Abriss auf beiden Seiten, im
+    // Relay gibt es keine PC – die Console behaelt den Slot dann, wie er ist.
+    if (me.room && me.token) sig.send({ t: 'resume', room: me.room, token: me.token, fresh: !relayed && !connected() });
+    else if (me.room) sig.send({ t: 'join', room: me.room });
+  }
+  function connected() { return !!pc && pc.connectionState === 'connected'; }
+
+  function onMessage(m) {
+    switch (m.t) {
+      case 'joined': onJoined(m); break;
+      case 'offer': onOffer(m); break;
+      case 'ice': if (pc) ice.add(pc, m.candidate); break;
+      case 'turn': iceServers = m.iceServers; break;
+      case 'relay': onCtrlEvent(m.d); break;
+      case 'host-away': banner('Die Console ist weg – warte auf Rückkehr …'); break;
+      case 'host-back': banner(''); break;
+      case 'room-closed': stop('Raum geschlossen (' + m.reason + ') – bitte neu beitreten.'); break;
+      case 'error': onError(m); break;
+    }
+  }
+
+  // Event-Kanal: DataChannel, sonst Relay ueber den Server.
+  function onCtrlEvent(txt) {
+    var m; try { m = JSON.parse(txt); } catch (e) { return; }
+    if (m.t === 'mode') setLock(!!m.motion);
+  }
+  function ev(o) {
+    var txt = JSON.stringify(o);
+    if (!relayOnly && events && events.readyState === 'open') events.send(txt);
+    else if (relayed && sig) sig.send({ t: 'relay', d: txt });
+  }
+  // Kein eigener TURN im Live-Test: statt endlos neu zu laden geht der Datenstrom
+  // ueber die Signaling-WebSocket. Hoehere Latenz, aber kommt ueberall durch.
+  function useRelay() {
+    if (relayed) return;
+    if (!sig || !sig.isOpen()) return reloadOnce();
+    relayed = true;
+    // ponytail: Relay ist endgueltig bis zum naechsten Beitritt/Reload – kein WebRTC-Restart
+    // mehr nebenher (der lief sonst endlos gegen dieselbe Firewall). Mit coturn (Plan 04) entfaellt das.
+    closePeer();
+    console.info('wii: Relay ueber den Server');
+    status('Slot ' + slot + ' · Relay über Server');
+  }
+
+  function onError(m) {
+    if (m.code === 'RESUME_INVALID') stop('Raum auf dem Server weg – Spiel läuft weiter, kein Reconnect mehr möglich.', true);
+    else if (m.code === 'ROOM_NOT_FOUND') stop('Raum nicht gefunden – Code prüfen.');
+    else if (m.code === 'ROOM_FULL') stop('Raum ist voll (4 Spieler).');
+    else banner('Fehler: ' + m.code);
+  }
+  // keep=true: eine noch verbundene PeerConnection bleibt bestehen – der DataChannel
+  // haengt nicht am Signaling, das Spiel laeuft ohne Raum weiter (Plan 08 R1).
+  function stop(text, keep) {
+    forget();
+    if (sig) { sig.close(); sig = null; }
+    orphan = !!(keep && pc && pc.connectionState === 'connected');
+    if (orphan) {
+      status('Slot ' + slot + ' · connected (ohne Signaling)');
+    } else {
+      closePeer();
+      relayed = relayOnly;                                  // neuer Beitritt darf WebRTC wieder versuchen
+      ref = null;                                           // neuer Beitritt heisst neu kalibrieren
+      $('play').hidden = true; $('cal').hidden = true; $('join').hidden = false;
+      $('start').textContent = 'Start';
+      document.body.style.background = '';
+      status('nicht verbunden');
+      applyLock();                                          // ohne Spiel-View kein Overlay – der Beitritt braucht den Touch
+    }
+    banner(text);
+  }
+
+  function onJoined(m) {
+    me.room = m.room; me.token = m.resumeToken; save();
+    slot = m.slot; color = m.color; iceServers = m.iceServers;
+    restarts = 0; banner('');
+    $('mote').style.setProperty('--slot', color);
+    Array.prototype.forEach.call($('leds').children, function (el, i) { el.classList.toggle('on', i === slot); });
+    $('join').hidden = true;
+    // Nur nach Reload oder erstem Beitritt ist die Nulllage weg (ref === null) – dann
+    // kalibrieren. Beim reinen Signaling-Resume gilt sie weiter: der Spieler spielt ohne
+    // Unterbrechung weiter, das Overlay bleibt. Den Motion-Modus schickt die Console beim
+    // Neuaufgehen des Event-Kanals ohnehin nach (Plan 01).
+    if (ref === null) askCalibration();
+    else { $('cal').hidden = true; $('play').hidden = false; applyLock(); }
+    $('start').textContent = 'Start';
+    // Plan 05, Schritt 2: PC bei `joined` – aber nur, wenn keine verbundene mehr da ist
+    // (Signaling-Abriss: die alte laeuft weiter). Im Relay gibt es keinen zweiten Anlauf.
+    if (relayed) closePeer();
+    else if (!connected()) newPeer();
+    status('Slot ' + slot + (relayed ? ' · Relay über Server' : m.resumed ? ' – wieder verbunden' : ' – warte auf Console'));
+  }
+
+  // --- PeerConnection -------------------------------------------------------
+  function closePeer() {
+    clearTimeout(discT); discT = 0;
+    clearTimeout(relayT); relayT = 0;
+    if (pc) { try { pc.close(); } catch (e) {} }
+    pc = sensors = events = null; remoteFp = null;
+  }
+
+  function newPeer() {
+    closePeer();
+    var p = Wii.peer(iceServers);
+    pc = p.pc; sensors = p.sensors; events = p.events; ice = Wii.iceQueue();
+    clearTimeout(relayT);
+    relayT = setTimeout(function () { if (pc === p.pc && p.pc.connectionState !== 'connected') useRelay(); }, 8000);
+    p.events.onmessage = function (e) { onCtrlEvent(e.data); };
+    p.pc.onicecandidate = function (e) { if (e.candidate && sig) sig.send({ t: 'ice', candidate: e.candidate }); };
+    p.pc.onconnectionstatechange = function () {
+      if (pc !== p.pc) return;
+      var st = p.pc.connectionState;
+      status('Slot ' + slot + ' · ' + st + (orphan ? ' (ohne Signaling)' : ''));
+      clearTimeout(discT); discT = 0;
+      if (st === 'connected') { restarts = 0; clearTimeout(relayT); relayT = 0; if (!orphan) banner(''); }
+      // Ohne Raum ist kein Restart aushandelbar – dann wie bisher aufraeumen.
+      if (st === 'failed') return orphan ? stop('Verbindung beendet – bitte neu beitreten.') : requestRestart('failed');
+      if (st === 'disconnected') discT = setTimeout(function () { requestRestart('disconnected'); }, 5000);   // 5 s Karenz
+    };
+    p.pc.oniceconnectionstatechange = function () {
+      if (pc === p.pc && p.pc.iceConnectionState === 'failed') requestRestart('ice failed');                  // sofort
+    };
+  }
+
+  // Die Console erzeugt bei Reload/Resume eine neue PeerConnection – erkennbar am
+  // neuen DTLS-Zertifikat. Gleicher Fingerprint = ICE-Restart auf derselben PC.
+  function fingerprintOf(sdp) {
+    var m = /^a=fingerprint:\S+ (\S+)/m.exec((sdp && sdp.sdp) || '');
+    return m ? m[1] : '';
+  }
+  function onOffer(m) {
+    if (relayed) return;                                    // Daten laufen ueber den Server, kein WebRTC mehr
+    var fp = fingerprintOf(m.sdp);
+    if (!pc || pc.signalingState === 'closed' || (remoteFp && fp && fp !== remoteFp)) newPeer();
+    remoteFp = fp;
+    var mine = pc, q = ice;                                 // newPeer() kann dazwischenkommen
+    mine.setRemoteDescription(m.sdp)
+      .then(function () { q.flush(mine); return mine.createAnswer(); })
+      .then(function (a) { return mine.setLocalDescription(a); })
+      .then(function () { if (sig) sig.send({ t: 'answer', sdp: mine.localDescription }); })
+      .catch(function (e) { console.warn('offer', e); });
+  }
+
+  // --- ICE-Restart (Plan 05, Schritt 6) ------------------------------------
+  function requestRestart(why) {
+    clearTimeout(discT); discT = 0;
+    if (!pc || pc.signalingState === 'closed' || pc.connectionState === 'connected' || !sig) return;
+    restarts++;
+    if (restarts > 2) return useRelay();                  // Slot bleibt per resumeToken 120 s reserviert
+    console.info('wii: restart anfordern (' + restarts + ') –', why);
+    status('Verbindung wackelt – Restart ' + restarts + ' …');
+    sig.send({ t: 'restart' });
+  }
+  function reloadOnce() {
+    var last = Number(sessionStorage.getItem(RELOAD_KEY) || 0);
+    if (Date.now() - last < 30000) { banner('Verbindung verloren – bitte Seite neu laden.'); return; }
+    try { sessionStorage.setItem(RELOAD_KEY, String(Date.now())); } catch (e) {}
+    location.reload();
+  }
+
+  // --- Kalibrierung ---------------------------------------------------------
+  // Vor der Kalibrierung geht kein Frame raus. Danach ist die gesendete Richtung relativ
+  // zur Kalibrier-Basis und Flag-Bit 0 sagt der Console „kalibriert“.
+  function askCalibration() {
+    ref = null; $('play').hidden = true; $('cal').hidden = false;
+    applyLock();                                            // beim Kalibrieren nie ein Overlay ueber dem Button
+    // ponytail: eine Nachricht genuegt – die Console blendet ihr Fadenkreuz wieder ein;
+    // dass wieder kalibriert ist, sagt danach Bit 0 der Frames von allein.
+    ev({ t: 'calib', state: 'start' });
+  }
+  // „Spitze auf die Bildschirmmitte“: y_ref = aktuelle Richtung, z_ref = Welt-oben
+  // orthogonalisiert dazu, x_ref = y × z (rechts). ponytail: ohne vorheriges
+  // deviceorientation-Event ist das die Einheitsbasis – genau richtig für ?fake=1.
+  $('calbtn').addEventListener('click', function () {
+    var y = dirW(), z = ortho([0, 0, 1], y);
+    // Zeigt die Spitze fast senkrecht nach oben oder unten, bleibt von Welt-oben nichts
+    // übrig – dann Welt-Norden als Ersatz; die Basis darf hier beliebig verdreht sein.
+    if (!z) z = ortho([0, 1, 0], y);
+    ref = { x: cross(y, z), y: y, z: z };
+    $('cal').hidden = true; $('play').hidden = false;
+    applyLock();                                            // Motion-Modus (gespeichert oder von der Console) erst jetzt
+  });
+  $('recal').addEventListener('click', askCalibration);      // Recenter (Plan 10, A2)
+
+  // --- Sensoren -------------------------------------------------------------
+  function dot(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+  function cross(a, b) {
+    return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  }
+  // v gegen die Achse y orthogonalisieren und normieren; null, wenn kaum etwas übrig bleibt.
+  function ortho(v, y) {
+    var k = dot(v, y), o = [v[0] - k * y[0], v[1] - k * y[1], v[2] - k * y[2]];
+    var n = Math.sqrt(dot(o, o));
+    return n < 0.1 ? null : [o[0] / n, o[1] / n, o[2] / n];
+  }
+  // Richtung der Handy-Längsachse (Geräte-Y) in Weltkoordinaten – 2. Spalte der
+  // W3C-Rotationsmatrix. Das Rollen (gamma) dreht nur um diese Achse und fällt heraus;
+  // deshalb gibt es hier keine Gimbal-Singularität wie beim Gier/Nick-Differenzmodell.
+  function dirW() {
+    var a = ori[0] * RAD, b = ori[1] * RAD;
+    return [-Math.cos(b) * Math.sin(a), Math.cos(a) * Math.cos(b), Math.sin(b)];
+  }
+  function onOrient(e) { ori[0] = e.alpha || 0; ori[1] = e.beta || 0; }
+  function onMotion(e) {
+    var a = e.acceleration || {}, r = e.rotationRate || {}, w = dirW();
+    push(a.x, a.y, a.z, r.alpha, r.beta, r.gamma, w[0], w[1], w[2]);
+  }
+  // wx/wy/wz ist die Richtung in Weltkoordinaten; gesendet wird sie in der Kalibrier-Basis
+  // (x rechts, y zur Bildschirmmitte, z oben), Frame-Index 7–9.
+  function push(ax, ay, az, rx, ry, rz, wx, wy, wz) {
+    var dc = !relayOnly && sensors && sensors.readyState === 'open' ? sensors : null;
+    if (!ref || !sending || (!dc && !(relayed && sig && sig.isOpen()))) return;
+    if (dc && dc.bufferedAmount >= 4 * Wii.FRAME_BYTES) return;       // Rückstau: Frame verwerfen
+    seq = (seq + 1) & 0xffff;
+    if (seq === 0) seq = 1;                                          // 0 heißt in der Unity-Brücke „kein Frame“
+    var w = [wx, wy, wz];
+    Wii.writeFrame(fdv, seq, 1, [performance.now(), ax, ay, az, rx, ry, rz,   // flags Bit 0 = kalibriert
+                                 dot(w, ref.x), dot(w, ref.y), dot(w, ref.z)]);
+    try { dc ? dc.send(fbuf) : sig.sendBin(fbuf); frames++; } catch (e) {}
+  }
+  // ponytail: Fake-Schwung (Plan 02, Schritt 4) – eine Queue aus [az, el]-Paaren, die der
+  // Ticker Frame für Frame abarbeitet: 8 Frames auf einer Geraden durch die hold-Richtung
+  // in Richtung deg, Drehrate und Beschleunigung 0. Ist die Queue leer, gilt wieder hold
+  // bzw. der Sinus. Im Fake-Modus ist die Kalibrier-Basis die Einheitsbasis (kein
+  // deviceorientation-Event), also geht az/el direkt als Richtung raus.
+  var swings = [];
+  function azHold() { return held ? -hold[0] : 0; }
+  function elHold() { return held ? hold[1] : 0; }
+  function fakeSwing(deg) {
+    var r = deg * RAD, az = azHold(), el = elHold();
+    for (var i = 0; i < 8; i++) {
+      var s = -1 + 2 * i / 7;                                        // -1 … +1: von der einen Seite auf die andere
+      swings.push([az + 25 * Math.cos(r) * s, el + 25 * Math.sin(r) * s]);
+    }
+  }
+  // Azimut/Elevation in Grad → Einheitsvektor: x rechts, y zur Bildschirmmitte, z oben.
+  function pushAim(az, el) {
+    var a = az * RAD, e = el * RAD;
+    push(0, 0, 0, 0, 0, 0, Math.sin(a) * Math.cos(e), Math.cos(a) * Math.cos(e), Math.sin(e));
+  }
+  function startFake() {
+    window.__fakeSwing = fakeSwing;                                  // nur im Fake-Modus: E2E und DevTools
+    addEventListener('keydown', function (e) {
+      if (e.key === 'h') fakeSwing(0);                               // waagerechter Schnitt
+      else if (e.key === 'v') fakeSwing(90);                         // senkrechter Schnitt
+    });
+    setInterval(function () {
+      var t = performance.now() / 1000, w = swings.shift();
+      if (w) pushAim(w[0], w[1]);                                    // Schwung: Spitze fährt durch die Ruhelage
+      else if (held) pushAim(azHold(), elHold());                    // hold: Richtung bleibt fest
+      // ohne hold ein langsamer Sinus, damit der Zeiger auf der Console wandert.
+      else pushAim(-25 * Math.sin(t * 0.4), 35 * Math.sin(t));
+    }, 16);                                                          // ≈ 60 Hz
+  }
+
+  // --- Tasten ---------------------------------------------------------------
+  Array.prototype.forEach.call(document.querySelectorAll('.k'), function (el) {
+    var id = Number(el.getAttribute('data-id'));
+    el.addEventListener('pointerdown', function (e) {
+      e.preventDefault();
+      if (el.setPointerCapture) { try { el.setPointerCapture(e.pointerId); } catch (err) {} }
+      el.classList.add('on'); btn(id, true);
+    });
+    var up = function (e) { e.preventDefault(); el.classList.remove('on'); btn(id, false); };
+    el.addEventListener('pointerup', up);
+    el.addEventListener('pointercancel', up);
+    el.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+  });
+  // --- Motion-Modus (Overlay #lock): per Button am Handy oder per {t:'mode'} von der Console.
+  // Gewünschter Zustand überlebt Reload (sessionStorage); aktiv wird er erst im Spiel-View,
+  // denn Beitreten und Kalibrieren brauchen den Touch.
+  var lockT = 0, lockWanted = false;
+  try { lockWanted = !!sessionStorage.getItem(LOCK_KEY); } catch (e) {}
+  function setLock(on) {
+    lockWanted = !!on;
+    try { sessionStorage.setItem(LOCK_KEY, on ? '1' : ''); } catch (e) {}
+    applyLock();
+  }
+  function applyLock() {
+    var on = lockWanted && !$('play').hidden;
+    $('lock').hidden = !on; $('lock').classList.remove('arm'); clearTimeout(lockT);
+  }
+  $('lockbtn').addEventListener('click', function () { setLock(true); });
+  $('lock').addEventListener('pointerdown', function (e) {
+    e.preventDefault(); $('lock').classList.add('arm');
+    clearTimeout(lockT); lockT = setTimeout(function () { setLock(false); }, 2000);   // nur ein echter langer Druck entsperrt
+  });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (t) {
+    $('lock').addEventListener(t, function () { clearTimeout(lockT); $('lock').classList.remove('arm'); });
+  });
+  $('lock').addEventListener('contextmenu', function (e) { e.preventDefault(); });
+  function btn(id, down) {
+    ev({ t: 'btn', id: id, down: down });
+  }
+
+  // --- Raum-Code eingeben ---------------------------------------------------
+  // Native Tastatur. Tippfehler faengt Wii.normalizeCode ab (klein → gross, O → 0, I/L → 1).
+  // Go/Enter startet, damit die aufgeklappte Tastatur den Start-Button nie verdecken kann.
+  // ponytail: getippter Text legt auf iOS einen Undo-Verlauf an – ein Hieb im Spiel gilt als
+  // Schuetteln und zeigt "Eingabe widerrufen". Dagegen das blur() unten: ohne Fokus kein Dialog.
+  $('code').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); $('start').click(); }
+  });
+
+  // --- Start (alles im selben Klick-Handler, Plan 05 Schritt 4) -------------
+  $('start').addEventListener('click', async function () {
+    $('code').blur();                                                        // Tastatur zu, Fokus weg (iOS-Undo)
+    if (!isSecureContext) return hint('Bitte über https:// öffnen');
+    var code = Wii.normalizeCode($('code').value);
+    if (!code) return hint('Bitte den 5-stelligen Raum-Code eingeben');
+    hint('');
+    if (!fake) {
+      var Es = [window.DeviceMotionEvent, window.DeviceOrientationEvent];
+      for (var i = 0; i < Es.length; i++) {
+        var E = Es[i];
+        if (!E || typeof E.requestPermission !== 'function') continue;        // nur iOS
+        var res = 'denied';
+        try { res = await E.requestPermission(); } catch (err) {}
+        if (res !== 'granted') return hint('Bewegungszugriff abgelehnt – Tab schließen und neu öffnen');
+      }
+    }
+    Wii.keepAwake();
+    // best effort: greift nur in Fullscreen/PWA, Fehler sind hier egal
+    try { if (screen.orientation && screen.orientation.lock) screen.orientation.lock('portrait').catch(function () {}); } catch (e) {}
+    if (fake) startFake();
+    else { addEventListener('devicemotion', onMotion); addEventListener('deviceorientation', onOrient); }
+    if (me.room !== code) forget();                                          // anderer Raum → alter Token wertlos
+    me.room = code; save();
+    status('verbinde …');
+    connect();
+  });
+
+  // --- Lebenszyklus (Plan 05, Schritt 5) -----------------------------------
+  function ensure() {
+    if (!sig) return;
+    sig.ensure();
+    if (pc && (pc.connectionState === 'disconnected' || pc.connectionState === 'failed')) requestRestart('ensure');
+  }
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') { sending = true; Wii.keepAwake(); ensure(); }
+    else sending = false;                                                    // stopSending()
+  });
+  addEventListener('pageshow', function (e) { if (e.persisted) ensure(); });
+  addEventListener('online', ensure);
+
+  setInterval(function () { fps = frames; frames = 0; $('rate').textContent = fps + ' fps'; }, 1000);
+
+  $('ver').textContent = 'Stand ' + document.lastModified.slice(11, 16);   // "09/03/2026 17:33:32" -> "17:33"
+
+  load();
+  var pre = Wii.normalizeCode(Wii.query.get('room')) || me.room || '';
+  $('code').value = pre;
+  if (me.room && me.token) { $('start').textContent = 'Fortsetzen'; hint('Verbindung unterbrochen – zum Fortsetzen tippen.'); }
+})();
+</script>
+</body>
+</html>

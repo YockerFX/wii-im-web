@@ -1,0 +1,23 @@
+# Lokale Entwicklung: docker compose -f compose.yaml -f compose.dev.yaml up --build
+# Lokale .env: LAN_IP=<LAN_IP> DOMAIN=dev SERVER_IPV4=<LAN_IP> SERVER_IPV6=::1 TURN_SECRET=dev
+# Static kommt direkt aus ./out. coturn ist lokal aus (Docker Desktop kann kein echtes host-Netz); Relay-Tests gegen Prod.
+# Postgres und Garage sind lokal aus, bis der Client sie braucht (Plan 11).
+services:
+  caddy:
+    volumes: !override
+      - ./Caddyfile.dev:/etc/caddy/Caddyfile:ro
+      - ./caddy/site.caddy:/etc/caddy/site.caddy:ro
+      - ./out:/srv/current:ro
+      - caddy_data:/data
+      - caddy_config:/config
+  signaling:
+    environment:
+      TURN_HOST: ${LAN_IP}
+      ALLOWED_ORIGINS: https://${LAN_IP},https://localhost
+    depends_on: !reset []
+  coturn:
+    profiles: ["disabled"]
+  postgres:
+    profiles: ["disabled"]
+  garage:
+    profiles: ["disabled"]

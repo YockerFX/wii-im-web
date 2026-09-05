@@ -1,0 +1,12 @@
+{
+  "name": "signaling",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "dependencies": { "ws": "^8.21.3" },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  }
+}
